@@ -9,6 +9,7 @@ from langchain_community.document_loaders import TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.vectorstores import InMemoryVectorStore
+# from langchain_chroma import Chroma
 
 
 # 1. Conectarnos a OpenRouter.
@@ -36,12 +37,22 @@ splitter = RecursiveCharacterTextSplitter(
 
 chunks = splitter.split_documents(documentos)
 
-print(chunks)
-
 # 4. Modelo de embeddings.
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 )
+
+'''
+# 5. Crear el almacén vectorial en memoria fisica
+base_vectorial = Chroma(
+    collection_name="documentos_rag",
+    embedding_function=embeddings,
+    persist_directory="./base_vectorial"
+)
+#base_vectorial.reset_collection()
+if (not Path("./base_vectorial").is_dir()) or (not base_vectorial.get(limit=1)["ids"]):
+    base_vectorial.add_documents(chunks)
+'''
 
 # 5. Crear el almacén vectorial en memoria
 base_vectorial = InMemoryVectorStore(embeddings)
@@ -56,50 +67,48 @@ retriever = base_vectorial.as_retriever(
 )
 
 
-# 7. Metaprompt e inicialización de memoria.
+# 7. Metaprompt.
 system_Documental = """
     Eres el especialista documental.
     Responde únicamente con la información del texto proporcionado.
     Si el texto no contiene la respuesta, indícalo. No inventes datos.
 """
 
-instruccion = SystemMessage(content=system_Documental)
-Historial = []
-Resumen = ""
-
-# 8. Ejecución del chat RAG.
+# 8. Ejecución del chat.
 while True:
-    solicitud = input("\nUser: ").strip()
 
-    if not solicitud:
-        continue
-    if solicitud.lower() == "salir":
+    usuario = input("Usuario: ").strip()
+
+    if usuario.lower() == "salir":
         break
 
-    # Recuperar los 3 fragmentos más relevantes de Anillos.pdf
-    docs_relevantes = retriever.invoke(solicitud)
-    contexto_pdf = "\n\n".join(doc.page_content for doc in docs_relevantes)
+    if not usuario:
+        continue
 
-    # Construir el prompt con el contexto del PDF + resumen + pregunta
-    prompt_con_contexto = (
-        f"Contexto del documento:\n{contexto_pdf}\n\n"
-        f"Resumen de la conversación anterior:\n{Resumen}\n\n"
-        f"Pregunta del usuario: {solicitud}"
+    system_reinterpretacion = "Re interpreta la solicitud del usuario y escribela brevemente de forma clara y sencilla usando palabras tecnicas si el usuario las utiliza"
+    reinterpretacion = llm.invoke([system_reinterpretacion, usuario])
+    # Recuperar los documentos más similares.
+    resultados= retriever.invoke(reinterpretacion.content)
+
+    # Construir el contexto.
+    contexto = ""
+
+    for documento in resultados:
+        contexto += documento.page_content + "\n\n"
+
+    # Construir los mensajes.
+    instruccion_RAG = SystemMessage(content=system_Documental)
+
+    solicitud = HumanMessage(
+        content=f"""
+        Contexto_Recuperado_Base: {contexto}
+        Pregunta_Usuario: {usuario}
+        """
     )
 
-    pregunta = HumanMessage(content=prompt_con_contexto)
-    respuesta = llm.invoke([instruccion, pregunta])
-
-    # 1. Imprimir la respuesta inmediatamente
-    print(f"\nAI: {respuesta.content}\n")
-
-    # 2. Actualizar historial y resumen
-    Historial.extend([pregunta, respuesta])
-    Resumen_1 = llm.invoke([
-        SystemMessage(
-            content=f"Resume la conversación en máximo 500 caracteres. Conserva la información importante. Resumen anterior: {Resumen}"
-        ),
-        HumanMessage(content=f"Usuario: {solicitud}\nAsistente: {respuesta.content}"),
-        HumanMessage(content="Actualiza el resumen de la conversación.")
+    respuesta = llm.invoke([
+        instruccion_RAG,
+        solicitud
     ])
-    Resumen = Resumen_1.content
+
+    print("Respuesta:", respuesta.content, "\n")
