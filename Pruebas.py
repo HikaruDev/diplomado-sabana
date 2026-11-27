@@ -18,25 +18,25 @@ Historial = []
 Resumen = ""
 
 while True:
-    solicitud = input("User: ").strip()
+    solicitud = input("\nUser: ").strip()
 
+    if not solicitud:
+        continue
     if solicitud.lower() == "salir":
         break
 
-    pregunta = HumanMessage(content=solicitud + "\n Resumen Anterior:" + Resumen)
+    pregunta = HumanMessage(content=f"{solicitud}\nResumen anterior: {Resumen}")
+    respuesta = llm.invoke([instruccion, pregunta])
 
-    respuesta = llm.invoke([instruccion] + [pregunta])
+    # 1. Imprimir la respuesta inmediatamente al recibirla
+    print(f"\nAI: {respuesta.content}\n")
 
+    # 2. Actualizar el historial y el resumen en segundo plano
     Historial.extend([pregunta, respuesta])
-
-    Resumen_aux = [pregunta, respuesta]
-
-    Resumen_1 = llm.invoke(
-        [SystemMessage(content="Resume la conversación en máximo 500 caracteres. Conserva la información importante. Resumen anterior: " + Resumen)]
-        + Resumen_aux
-        + [HumanMessage(content="Actualiza el resumen de la conversación.")]
-    )
-
+    Resumen_1 = llm.invoke([
+        SystemMessage(content=f"Resume la conversación en máximo 500 caracteres. Conserva la información importante. Resumen anterior: {Resumen}"),
+        pregunta,
+        respuesta,
+        HumanMessage(content="Actualiza el resumen de la conversación.")
+    ])
     Resumen = Resumen_1.content
-
-    print(respuesta.content)
